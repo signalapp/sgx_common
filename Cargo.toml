@@ -1,3 +1,7 @@
 [workspace]
 
-members = ["sgx_sdk_ffi"]
+members = [
+    "sgx_sdk_ffi",
+    "ias_client",
+    "kbupd_util",
+    ]
