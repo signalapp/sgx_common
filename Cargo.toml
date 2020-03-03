@@ -1,0 +1,3 @@
+[workspace]
+
+members = ["sgx_sdk_ffi"]
