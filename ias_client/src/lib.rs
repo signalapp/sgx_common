@@ -32,9 +32,10 @@ use sgx_sdk_ffi::SgxQuote;
 use try_future::{try_future, TryFuture};
 
 pub struct IasClient<C> {
-    base_uri: Uri,
-    api_key:  Option<HeaderValue>,
-    client:   Client<C, Body>,
+    base_uri:    Uri,
+    api_version: IasApiVersion,
+    api_key:     Option<HeaderValue>,
+    client:      Client<C, Body>,
 }
 
 #[derive(Debug, failure::Fail)]
@@ -48,24 +49,41 @@ pub enum GetQuoteSignatureError {
 #[derive(Clone, Default)]
 pub struct SignatureRevocationList(pub Vec<u8>);
 
+#[derive(Debug, Clone, Copy)]
+pub enum IasApiVersion {
+    ApiVer3 = 3,
+    ApiVer4 = 4,
+}
+
 impl<C> IasClient<C>
 where
     C: Connect + 'static,
     C::Transport: 'static,
     C::Future: 'static,
 {
-    pub fn new(base_uri: &str, api_key: Option<&str>, connector: C) -> Result<Self, failure::Error> {
-        let base_uri = if api_key.is_some() {
-            uri_path_join(base_uri.parse()?, format_args!("/attestation/v3"))?
-        } else {
-            uri_path_join(base_uri.parse()?, format_args!("/attestation/sgx/v3"))?
+    pub fn new(base_uri: &str, api_version: Option<IasApiVersion>, api_key: Option<&str>, connector: C) -> Result<Self, failure::Error> {
+        let api_version = api_version.unwrap_or(IasApiVersion::ApiVer3);
+        let api_version_str = match api_version {
+            IasApiVersion::ApiVer3 => "v3",
+            IasApiVersion::ApiVer4 => "v4",
         };
+        let base_uri = if api_key.is_some() {
+            uri_path_join(base_uri.parse()?, format_args!("/attestation/{}", api_version_str))?
+        } else {
+            uri_path_join(base_uri.parse()?, format_args!("/attestation/sgx/{}", api_version_str))?
+        };
+
         let client = Client::builder().build(connector);
         let api_key = match api_key {
             Some(api_key) => Some(HeaderValue::from_bytes(api_key.as_bytes()).context("invalid IAS API key value")?),
-            None          => None,
+            None => None,
         };
-        Ok(Self { base_uri, api_key, client })
+        Ok(Self {
+            base_uri,
+            api_version,
+            api_key,
+            client,
+        })
     }
 
     pub fn get_signature_revocation_list(&self, gid: u32) -> impl Future<Item = SignatureRevocationList, Error = failure::Error> {
@@ -128,11 +146,12 @@ where
         accept_group_out_of_date: bool,
     ) -> impl Future<Item = SignedQuote, Error = GetQuoteSignatureError>
     {
+        let api_version = self.api_version.clone();
         let response = self.fetch_quote_signature(&quote);
         let signed_quote = response.then(move |response_result: Result<(http::response::Parts, Chunk), failure::Error>| {
             let (response_parts, response_data) = response_result.map_err(GetQuoteSignatureError::FetchError)?;
 
-            let signed_quote_result = validate_quote_signature(response_parts, response_data, quote, accept_group_out_of_date);
+            let signed_quote_result = validate_quote_signature(api_version, response_parts, response_data, quote, accept_group_out_of_date);
             signed_quote_result.map_err(GetQuoteSignatureError::QuoteVerificationError)
         });
 
@@ -147,9 +166,10 @@ where
 impl<C> Clone for IasClient<C> {
     fn clone(&self) -> Self {
         Self {
-            base_uri: self.base_uri.clone(),
-            api_key:  self.api_key.clone(),
-            client:   self.client.clone(),
+            base_uri:    self.base_uri.clone(),
+            api_version: self.api_version.clone(),
+            api_key:     self.api_key.clone(),
+            client:      self.client.clone(),
         }
     }
 }
@@ -168,6 +188,7 @@ fn uri_path_join(uri: Uri, append_path: fmt::Arguments<'_>) -> Result<Uri, failu
 }
 
 fn validate_quote_signature(
+    api_version: IasApiVersion,
     response_parts: http::response::Parts,
     response_body_data: Chunk,
     quote: Vec<u8>,
@@ -200,7 +221,7 @@ fn validate_quote_signature(
     let parsed_body: QuoteSignatureResponseBody =
         serde_json::from_slice(&body).map_err(|parse_error| QuoteVerificationError::InvalidJson(parse_error.into()))?;
 
-    if parsed_body.version != 3 {
+    if parsed_body.version != api_version as u64 {
         return Err(QuoteVerificationError::WrongVersion(parsed_body.version));
     }
 
@@ -209,18 +230,43 @@ fn validate_quote_signature(
     }
 
     match parsed_body.isvEnclaveQuoteStatus.as_str() {
-        "OK" => {}
-        "GROUP_OUT_OF_DATE" | "CONFIGURATION_NEEDED" => {
+        "OK" | "SW_HARDENING_NEEDED" => {}
+        "GROUP_OUT_OF_DATE" | "CONFIGURATION_NEEDED" | "CONFIGURATION_AND_SW_HARDENING_NEEDED" => {
             if !accept_group_out_of_date {
+                let (advisory_url, advisory_ids) = match api_version {
+                    IasApiVersion::ApiVer3 => (
+                        response_parts
+                            .headers
+                            .get("advisory-url")
+                            .map(|value| value.to_str().unwrap_or("None").to_owned()),
+                        response_parts
+                            .headers
+                            .get("advisory-ids")
+                            .map(|value| value.to_str().unwrap_or("None").to_owned()),
+                    ),
+                    IasApiVersion::ApiVer4 => {
+                        let advisory_ids = match parsed_body.advisoryIDs.clone().map(|vec| vec.join(", ")) {
+                            Some(v) if v.is_empty() => None,
+                            Some(v) => Some(v),
+                            _ => None,
+                        };
+                        (parsed_body.advisoryURL.clone(), advisory_ids)
+                    }
+                };
+
                 return Err(QuoteVerificationError::GroupOutOfDate(
                     parsed_body.isvEnclaveQuoteStatus.clone(),
+                    advisory_url,
+                    advisory_ids,
                     parsed_body,
                 ));
             }
         }
-        "GROUP_REVOKED"                              => {
+        "GROUP_REVOKED" => {
             return Err(QuoteVerificationError::GroupOutOfDate(
                 parsed_body.isvEnclaveQuoteStatus.clone(),
+                None,
+                None,
                 parsed_body,
             ));
         }
@@ -246,7 +292,7 @@ fn get_header_str<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a 
     if let Some(header) = headers.get(name) {
         match header.to_str() {
             Ok(header) => Ok(header),
-            Err(_)     => Err(QuoteVerificationError::InvalidHeaderValue(name, header.clone())),
+            Err(_) => Err(QuoteVerificationError::InvalidHeaderValue(name, header.clone())),
         }
     } else {
         Err(QuoteVerificationError::MissingHeader(name))
@@ -281,8 +327,8 @@ pub enum QuoteVerificationError {
     WrongQuote,
     #[fail(display = "stale attestation revocation list")]
     StaleRevocationList,
-    #[fail(display = "attestation group out of date: {}", _0)]
-    GroupOutOfDate(String, QuoteSignatureResponseBody),
+    #[fail(display = "attestation group out of date: {}, advisory URL: {:?}, advisory IDs: {:?}", _0, _1, _2)]
+    GroupOutOfDate(String, Option<String>, Option<String>, QuoteSignatureResponseBody),
     #[fail(display = "attestation error: {}", _0)]
     AttestationError(String),
 }
@@ -321,4 +367,8 @@ pub struct QuoteSignatureResponseBody {
     pub timestamp: String,
 
     pub platformInfoBlob: Option<String>,
+
+    pub advisoryURL: Option<String>,
+
+    pub advisoryIDs: Option<Vec<String>>,
 }
