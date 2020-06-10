@@ -33,10 +33,9 @@ pub fn decode(pem: &[u8]) -> Vec<Vec<u8>> {
 }
 
 pub fn encode<T>(tag: &str, certificates_der: impl IntoIterator<Item = T> + Clone) -> String
-where T: AsRef<[u8]>
-{
-    const PEM_BEGIN:      &'static str = "-----BEGIN ";
-    const PEM_END:        &'static str = "-----END ";
+where T: AsRef<[u8]> {
+    const PEM_BEGIN: &'static str = "-----BEGIN ";
+    const PEM_END: &'static str = "-----END ";
     const PEM_TAG_SUFFIX: &'static str = "-----\n";
 
     let config = base64::Config::new(base64::CharacterSet::Standard, true);
@@ -55,11 +54,10 @@ where T: AsRef<[u8]>
         encoded.push_str(tag);
         encoded.push_str(PEM_TAG_SUFFIX);
 
-        let base64:       String = base64::encode_config(certificate_der.as_ref(), config);
-        let base64_bytes: &[u8]  = base64.as_ref();
+        let base64: String = base64::encode_config(certificate_der.as_ref(), config);
+        let base64_bytes: &[u8] = base64.as_ref();
         for base64_line_bytes in base64_bytes.chunks(64) {
-            let base64_line_str = str::from_utf8(base64_line_bytes)
-                .unwrap_or_else(|_| unreachable!("base64 is ascii"));
+            let base64_line_str = str::from_utf8(base64_line_bytes).unwrap_or_else(|_| unreachable!("base64 is ascii"));
             encoded.push_str(base64_line_str);
             encoded.push_str("\n");
         }
@@ -95,7 +93,10 @@ mod tests {
         assert_eq!(decode(b"-----BEGIN -----\ndGVzdA==\n-----END -----"), [b"test"]);
         assert_eq!(decode(b"-----BEGIN -----\t \r\n dGVzdA== \n\n-----END TEST-----"), [b"test"]);
         assert_eq!(decode(b"-----BEGIN TEST-----\t \r\n dGVzdA== \n\n-----END TEST-----"), [b"test"]);
-        assert_eq!(decode(b"-----BEGIN TEST1 TEST2-----\t \r\n d\tG VzdA== \n\n-----END TEST1-TEST2-----"), [b"test"]);
+        assert_eq!(
+            decode(b"-----BEGIN TEST1 TEST2-----\t \r\n d\tG VzdA== \n\n-----END TEST1-TEST2-----"),
+            [b"test"]
+        );
         let test_certs = [b"test"];
         assert_eq!(decode(encode("", &test_certs).as_bytes()), test_certs);
         let test_certs = [b"test1", b"test2"];
@@ -108,7 +109,9 @@ mod tests {
         assert_eq!(encode("TEST", &no_certs), "");
         assert_eq!(encode("", &[b"test"]), "-----BEGIN -----\ndGVzdA==\n-----END -----\n");
         assert_eq!(encode("TEST", &[b""]), "-----BEGIN TEST-----\n-----END TEST-----\n");
-        assert_eq!(encode("TEST", &[b"test1", b"test2"]),
-                   "-----BEGIN TEST-----\ndGVzdDE=\n-----END TEST-----\n-----BEGIN TEST-----\ndGVzdDI=\n-----END TEST-----\n");
+        assert_eq!(
+            encode("TEST", &[b"test1", b"test2"]),
+            "-----BEGIN TEST-----\ndGVzdDE=\n-----END TEST-----\n-----BEGIN TEST-----\ndGVzdDI=\n-----END TEST-----\n"
+        );
     }
 }

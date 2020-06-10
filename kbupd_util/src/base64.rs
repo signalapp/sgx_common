@@ -16,7 +16,7 @@
  */
 
 use std::fmt;
-use std::marker::{PhantomData};
+use std::marker::PhantomData;
 
 use base64;
 use serde::{Deserializer, Serializer};
@@ -24,7 +24,7 @@ use serde::{Deserializer, Serializer};
 pub fn decode(encoded: &[u8]) -> Result<Vec<u8>, base64::DecodeError> {
     let space_regex = regex::bytes::Regex::new(r"[ \t\r\n]").unwrap();
     let base64_data = space_regex.replace_all(encoded, &b""[..]);
-    let config      = base64::Config::new(base64::CharacterSet::Standard, true);
+    let config = base64::Config::new(base64::CharacterSet::Standard, true);
     base64::decode_config(&base64_data, config)
 }
 
@@ -44,19 +44,18 @@ struct Base64Visitor;
 
 impl<'de> serde::de::Visitor<'de> for Base64Visitor {
     type Value = Vec<u8>;
+
     fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("a base64-encoded string")
     }
 
     fn visit_bytes<E>(self, base64: &[u8]) -> Result<Self::Value, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         decode(base64).map_err(|error| E::custom(error.to_string()))
     }
 
     fn visit_str<E>(self, base64: &str) -> Result<Self::Value, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         self.visit_bytes(base64.as_bytes())
     }
 }
@@ -71,21 +70,29 @@ impl<'de, T> serde::de::Visitor<'de> for FixedLengthBase64Visitor<T>
 where T: AsMut<[u8]> + AsRef<[u8]> + Default
 {
     type Value = T;
+
     fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("a base64-encoded string")
     }
 
     fn visit_bytes<E>(self, base64: &[u8]) -> Result<Self::Value, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         let mut deserialized = T::default();
         let estimated_length = (base64.len() + 3) / 4 * 3;
         if estimated_length > deserialized.as_ref().len() + 2 {
-            Err(E::custom(format!("base64 parameter length {} > {}", estimated_length, deserialized.as_ref().len())))
+            Err(E::custom(format!(
+                "base64 parameter length {} > {}",
+                estimated_length,
+                deserialized.as_ref().len()
+            )))
         } else {
             let data = decode(base64).map_err(|error| E::custom(error.to_string()))?;
             if data.len() != deserialized.as_ref().len() {
-                Err(E::custom(format!("base64 parameter length {} != {}", data.len(), deserialized.as_ref().len())))
+                Err(E::custom(format!(
+                    "base64 parameter length {} != {}",
+                    data.len(),
+                    deserialized.as_ref().len()
+                )))
             } else {
                 deserialized.as_mut().copy_from_slice(&data[..]);
                 Ok(deserialized)
@@ -94,8 +101,7 @@ where T: AsMut<[u8]> + AsRef<[u8]> + Default
     }
 
     fn visit_str<E>(self, base64: &str) -> Result<Self::Value, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         self.visit_bytes(base64.as_bytes())
     }
 }
@@ -110,5 +116,4 @@ pub trait SerdeFixedLengthBase64: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
     }
 }
 
-impl<T: AsMut<[u8]> + AsRef<[u8]> + Default> SerdeFixedLengthBase64 for T {
-}
+impl<T: AsMut<[u8]> + AsRef<[u8]> + Default> SerdeFixedLengthBase64 for T {}

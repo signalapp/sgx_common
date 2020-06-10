@@ -15,10 +15,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-use std::thread;
-use std::thread::{JoinHandle};
-use std::time::*;
 use std::sync::*;
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::*;
 
 #[derive(Clone)]
 pub struct StopJoinHandle<T> {
@@ -39,17 +39,19 @@ impl<T> StopJoinHandle<T> {
             join_handle: Arc::new(Mutex::new(Some(join_handle))),
         }
     }
+
     pub fn stop(&self) {
         let mut stopped_guard = match self.stop_state.stopped.lock() {
-            Ok(guard)   => guard,
+            Ok(guard) => guard,
             Err(poison) => poison.into_inner(),
         };
         *stopped_guard = true;
         self.stop_state.condvar.notify_all();
     }
+
     pub fn join(&self) -> Option<thread::Result<T>> {
         let mut join_handle_guard = match self.join_handle.lock() {
-            Ok(guard)   => guard,
+            Ok(guard) => guard,
             Err(poison) => poison.into_inner(),
         };
         if let Some(join_handle) = join_handle_guard.take() {
@@ -62,7 +64,7 @@ impl<T> StopJoinHandle<T> {
 impl StopState {
     pub fn sleep_while_running(&self, duration: Duration) -> bool {
         let mut stopped_guard = match self.stopped.lock() {
-            Ok(guard)   => guard,
+            Ok(guard) => guard,
             Err(poison) => poison.into_inner(),
         };
         let start = Instant::now();
@@ -72,11 +74,11 @@ impl StopState {
             }
             let timeout = match duration.checked_sub(start.elapsed()) {
                 Some(timeout) => timeout,
-                None          => break true,
+                None => break true,
             };
             stopped_guard = {
                 let (stopped_guard, wait_timeout_result) = match self.condvar.wait_timeout(stopped_guard, timeout) {
-                    Ok(result)  => result,
+                    Ok(result) => result,
                     Err(poison) => poison.into_inner(),
                 };
                 if wait_timeout_result.timed_out() {
@@ -95,9 +97,9 @@ mod test {
 
     #[test]
     fn test_stop_join() {
-        let stop_state   = Arc::new(StopState::default());
+        let stop_state = Arc::new(StopState::default());
         let stop_state_2 = stop_state.clone();
-        let join_handle  = std::thread::spawn(move || {
+        let join_handle = std::thread::spawn(move || {
             assert!(!stop_state.sleep_while_running(Duration::from_secs(60)));
         });
         let stop_join_handle = StopJoinHandle::new(stop_state_2, join_handle);
@@ -108,10 +110,10 @@ mod test {
 
     #[test]
     fn test_sleep_while_running() {
-        let stop_state   = Arc::new(StopState::default());
+        let stop_state = Arc::new(StopState::default());
         let stop_state_2 = stop_state.clone();
-        let (tx, rx)     = std::sync::mpsc::channel();
-        let join_handle  = std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let join_handle = std::thread::spawn(move || {
             assert!(stop_state.sleep_while_running(Duration::from_millis(1)));
             assert!(stop_state.sleep_while_running(Duration::from_millis(1)));
             let _ = tx.send(());

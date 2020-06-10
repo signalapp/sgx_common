@@ -72,7 +72,7 @@ where T: fmt::Display
         let OptionDisplay(inner) = self;
         match inner {
             Some(inner) => fmt::Display::fmt(inner, fmt),
-            None        => write!(fmt, "<none>"),
+            None => write!(fmt, "<none>"),
         }
     }
 }

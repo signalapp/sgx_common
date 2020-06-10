@@ -16,19 +16,18 @@
  */
 
 use std::fmt;
-use std::marker::{PhantomData};
+use std::marker::PhantomData;
 
 use serde::{Deserializer, Serializer};
 
-use super::{ToHex};
+use super::ToHex;
 
 pub fn parse(hex: &str) -> Result<Vec<u8>, hex::FromHexError> {
     hex::decode(hex)
 }
 
 pub fn parse_fixed<T>(hex: &str) -> Result<T, hex::FromHexError>
-where T: Sized + AsMut<[u8]> + AsRef<[u8]> + Default
-{
+where T: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
     let mut bytes = T::default();
     let () = hex::decode_to_slice(hex, bytes.as_mut())?;
     Ok(bytes)
@@ -50,12 +49,13 @@ struct HexVisitor;
 
 impl<'de> serde::de::Visitor<'de> for HexVisitor {
     type Value = Vec<u8>;
+
     fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("a hexadecimal-encoded string")
     }
+
     fn visit_str<E>(self, hex: &str) -> Result<Vec<u8>, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         parse(hex).map_err(|error| E::custom(format!("{}", error)))
     }
 }
@@ -70,12 +70,13 @@ impl<'de, T> serde::de::Visitor<'de> for FixedLengthHexVisitor<T>
 where T: AsMut<[u8]> + AsRef<[u8]> + Default
 {
     type Value = T;
+
     fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.write_str("a hexadecimal-encoded string")
     }
+
     fn visit_str<E>(self, hex: &str) -> Result<Self::Value, E>
-    where E: serde::de::Error
-    {
+    where E: serde::de::Error {
         parse_fixed(hex).map_err(|error| E::custom(format!("{}", error)))
     }
 }
@@ -90,8 +91,7 @@ pub trait SerdeFixedLengthHex: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
     }
 }
 
-impl<T: AsMut<[u8]> + AsRef<[u8]> + Default> SerdeFixedLengthHex for T {
-}
+impl<T: AsMut<[u8]> + AsRef<[u8]> + Default> SerdeFixedLengthHex for T {}
 
 #[cfg(test)]
 mod test {
@@ -99,9 +99,9 @@ mod test {
 
     #[test]
     fn test_parse() {
-        assert_eq!(&parse("").unwrap(),       b"");
+        assert_eq!(&parse("").unwrap(), b"");
         assert_eq!(&parse("616263").unwrap(), b"abc");
-        assert_eq!(&parse("00fF").unwrap(),   b"\x00\xFF");
+        assert_eq!(&parse("00fF").unwrap(), b"\x00\xFF");
 
         parse("\n").unwrap_err();
         parse(" ").unwrap_err();
@@ -121,16 +121,16 @@ mod test {
 
     #[test]
     fn test_parse_fixed() {
-        assert_eq!(&parse_fixed::<[u8; 0]>("").unwrap(),       b"");
+        assert_eq!(&parse_fixed::<[u8; 0]>("").unwrap(), b"");
         assert_eq!(&parse_fixed::<[u8; 3]>("616263").unwrap(), b"abc");
-        assert_eq!(&parse_fixed::<[u8; 2]>("00fF").unwrap(),   b"\x00\xFF");
+        assert_eq!(&parse_fixed::<[u8; 2]>("00fF").unwrap(), b"\x00\xFF");
 
         parse_fixed::<[u8; 1]>("").unwrap_err();
         parse_fixed::<[u8; 0]>("00").unwrap_err();
         parse_fixed::<[u8; 2]>("00").unwrap_err();
 
         macro_rules! test_parse_fixed {
-            ($n:literal) => ({
+            ($n:literal) => {{
                 parse_fixed::<[u8; $n]>("\n").unwrap_err();
                 parse_fixed::<[u8; $n]>(" ").unwrap_err();
                 parse_fixed::<[u8; $n]>(" 00").unwrap_err();
@@ -145,7 +145,7 @@ mod test {
                 parse_fixed::<[u8; $n]>("\x00\x00").unwrap_err();
                 parse_fixed::<[u8; $n]>("FF\x7F").unwrap_err();
                 parse_fixed::<[u8; $n]>("000").unwrap_err();
-            })
+            }};
         }
         test_parse_fixed!(0);
         test_parse_fixed!(1);
