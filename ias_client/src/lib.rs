@@ -355,7 +355,7 @@ pub struct QuoteSignatureRequest<'a> {
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 pub struct QuoteSignatureResponseBody {
     pub isvEnclaveQuoteStatus: String,
 
@@ -371,4 +371,20 @@ pub struct QuoteSignatureResponseBody {
     pub advisoryURL: Option<String>,
 
     pub advisoryIDs: Option<Vec<String>>,
+}
+
+impl fmt::Debug for QuoteSignatureResponseBody {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut output = fmt.debug_struct("QuoteSignatureResponseBody");
+        output
+            .field("isvEnclaveQuoteStatus", &self.isvEnclaveQuoteStatus)
+            .field("version", &self.version)
+            .field("timestamp", &self.timestamp)
+            .field("platformInfoBlob", &self.platformInfoBlob)
+            .field("advisoryURL", &self.advisoryURL)
+            .field("advisoryIDs", &self.advisoryIDs);
+
+        let quote_body = format!("{:02x?}", self.isvEnclaveQuoteBody);
+        output.field("isvEnclaveQuoteBody", &quote_body).finish()
+    }
 }
