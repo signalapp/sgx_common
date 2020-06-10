@@ -34,6 +34,9 @@ pub use bindgen_wrapper::{
     sgx_enclave_id_t as SgxEnclaveId, sgx_quote_t as SgxQuote, sgx_report_t as SgxReport, sgx_target_info_t as SgxTargetInfo,
 };
 
+pub mod sgx_quote;
+pub use sgx_quote::*;
+
 pub type SgxResult<T> = Result<T, SgxStatus>;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -274,14 +277,14 @@ impl SgxStatus {
     pub fn ok(self) -> SgxResult<()> {
         match self {
             SgxStatus::Success => Ok(()),
-            status             => Err(status),
+            status => Err(status),
         }
     }
 
     pub fn err(&self) -> Option<&SgxError> {
         match self {
             SgxStatus::Error(error) => Some(error),
-            _                       => None,
+            _ => None,
         }
     }
 }
@@ -315,8 +318,8 @@ impl From<SgxError> for SgxStatus {
 impl From<SgxStatus> for sgx_status_t {
     fn from(sgx_status: SgxStatus) -> Self {
         match sgx_status {
-            SgxStatus::Success             => SGX_SUCCESS,
-            SgxStatus::Error(sgx_error)    => sgx_error.into(),
+            SgxStatus::Success => SGX_SUCCESS,
+            SgxStatus::Error(sgx_error) => sgx_error.into(),
             SgxStatus::Unknown(sgx_status) => sgx_status,
         }
     }
