@@ -12,3 +12,13 @@ jobs:
           with:
             toolchain: stable
         - run: cargo test --all-features
+    format:
+      name: code format
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v2
+        - uses: actions-rs/toolchain@v1
+          with:
+            toolchain: nightly
+            components: rustfmt
+        - run: cargo +nightly fmt -- --check
