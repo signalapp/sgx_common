@@ -26,8 +26,6 @@ use http::{self, HeaderMap, Uri};
 use hyper::client::connect::Connect;
 use hyper::{Body, Chunk, Client, Method, Request, Response};
 use kbupd_util::base64;
-use log::warn;
-use openssl::x509::X509;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use sgx_sdk_ffi::SgxQuote;
@@ -218,19 +216,6 @@ fn validate_quote_signature(
         return Err(QuoteVerificationError::InvalidCertificates(pem_certificates.to_string()));
     }
 
-    // TODO(KBS-174): remove this logging or make it a return, not a log
-    for (i, cert_bytes) in certificates.iter().enumerate() {
-        let res = X509::from_der(cert_bytes);
-        match res {
-            Ok(_) => {
-                // do nothing
-            }
-            Err(err) => warn!(
-                "unable to parse X-IAS-Report-Signing-Certificate index {} (full bytes: '{}'): {}",
-                i, pem_certificates, err
-            ),
-        }
-    }
     let body = response_body_data.to_vec();
 
     let parsed_body: QuoteSignatureResponseBody =
