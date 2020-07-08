@@ -12,6 +12,9 @@ futures      = "0.1"
 http         = "0.1"
 hyper        = "0.12"
 kbupd_util   = { path = "../kbupd_util" }
+log          = { version = "0.4", features = ["std"] }
+openssl      = { rev = "ea6761d5e7b63b415b7fda6ba5c5026f4218bcd0", git = "https://github.com/signalapp/rust-openssl.git" }
+openssl-sys  = { rev = "ea6761d5e7b63b415b7fda6ba5c5026f4218bcd0", git = "https://github.com/signalapp/rust-openssl.git" }
 serde        = "1.0"
 serde_derive = "1.0"
 serde_json   = "1.0"
