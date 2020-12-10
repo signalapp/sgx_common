@@ -103,7 +103,7 @@ where C: Connect + Clone + Send + Sync + 'static
             return Err(format_err!("HTTP error: {}", response.status().as_str()));
         }
         let data = hyper::body::to_bytes(response.body_mut()).await?;
-        return Ok(SignatureRevocationList(base64::decode(&data)?));
+        Ok(SignatureRevocationList(base64::decode(&data)?))
     }
 
     async fn fetch_quote_signature(&self, quote: &[u8]) -> Result<(Parts, Bytes), failure::Error> {
@@ -126,7 +126,7 @@ where C: Connect + Clone + Send + Sync + 'static
         let response = self.client.request(hyper_request).await?;
         let (response_parts, response_body) = response.into_parts();
         let response_data = body::to_bytes(response_body).await?;
-        return Ok((response_parts, response_data));
+        Ok((response_parts, response_data))
     }
 
     pub async fn get_quote_signature(&self, quote: Vec<u8>, accept_group_out_of_date: bool) -> Result<SignedQuote, GetQuoteSignatureError> {
@@ -140,7 +140,7 @@ where C: Connect + Clone + Send + Sync + 'static
     }
 
     fn request_uri(&self, append_path: fmt::Arguments<'_>) -> Result<Uri, failure::Error> {
-        return uri_path_join(self.base_uri.clone(), append_path);
+        uri_path_join(self.base_uri.clone(), append_path)
     }
 }
 
@@ -176,8 +176,7 @@ fn validate_quote_signature(
     response_body_data: Bytes,
     quote: Vec<u8>,
     accept_group_out_of_date: bool,
-) -> Result<SignedQuote, QuoteVerificationError>
-{
+) -> Result<SignedQuote, QuoteVerificationError> {
     if !response_parts.status.is_success() {
         let response_body_string = String::from_utf8_lossy(&response_body_data).to_string();
         return Err(QuoteVerificationError::HttpError(
