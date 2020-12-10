@@ -19,23 +19,23 @@ use std::fmt;
 use std::mem;
 
 use failure::{format_err, ResultExt};
-use futures::prelude::*;
-use http::header::HeaderValue;
-use http::uri::PathAndQuery;
-use http::{self, HeaderMap, Uri};
+use hyper::body::Bytes;
 use hyper::client::connect::Connect;
-use hyper::{Body, Chunk, Client, Method, Request, Response};
+use hyper::http::response::Parts;
+use hyper::http::uri::PathAndQuery;
+use hyper::http::HeaderValue;
+use hyper::{body, StatusCode};
+use hyper::{Body, Client, HeaderMap, Method, Request, Uri};
 use kbupd_util::base64;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use sgx_sdk_ffi::SgxQuote;
-use try_future::{try_future, TryFuture};
 
 pub struct IasClient<C> {
     base_uri:    Uri,
     api_version: IasApiVersion,
     api_key:     Option<HeaderValue>,
-    client:      Client<C, Body>,
+    client:      Client<C>,
 }
 
 #[derive(Debug, failure::Fail)]
@@ -56,10 +56,7 @@ pub enum IasApiVersion {
 }
 
 impl<C> IasClient<C>
-where
-    C: Connect + 'static,
-    C::Transport: 'static,
-    C::Future: 'static,
+where C: Connect + Clone + Send + Sync + 'static
 {
     pub fn new(base_uri: &str, api_version: Option<IasApiVersion>, api_key: Option<&str>, connector: C) -> Result<Self, failure::Error> {
         let api_version = api_version.unwrap_or(IasApiVersion::ApiVer3);
@@ -67,10 +64,12 @@ where
             IasApiVersion::ApiVer3 => "v3",
             IasApiVersion::ApiVer4 => "v4",
         };
+
+        let raw_base = base_uri.parse::<Uri>()?;
         let base_uri = if api_key.is_some() {
-            uri_path_join(base_uri.parse()?, format_args!("/attestation/{}", api_version_str))?
+            uri_path_join(raw_base, format_args!("/attestation/{}", api_version_str))?
         } else {
-            uri_path_join(base_uri.parse()?, format_args!("/attestation/sgx/{}", api_version_str))?
+            uri_path_join(raw_base, format_args!("/attestation/sgx/{}", api_version_str))?
         };
 
         let client = Client::builder().build(connector);
@@ -86,8 +85,8 @@ where
         })
     }
 
-    pub fn get_signature_revocation_list(&self, gid: u32) -> impl Future<Item = SignatureRevocationList, Error = failure::Error> {
-        let uri = try_future!(self.request_uri(format_args!("/sigrl/{:08x}", gid)));
+    pub async fn get_signature_revocation_list(&self, gid: u32) -> Result<SignatureRevocationList, failure::Error> {
+        let uri = self.request_uri(format_args!("/sigrl/{:08x}", gid))?;
 
         let mut hyper_request = Request::new(Body::empty());
 
@@ -98,25 +97,20 @@ where
             hyper_request.headers_mut().insert("Ocp-Apim-Subscription-Key", api_key.clone());
         }
 
-        let response = self.client.request(hyper_request);
-        let response_data = response.from_err().and_then(|response: Response<Body>| {
-            if !response.status().is_success() {
-                return TryFuture::from_error(format_err!("HTTP error: {}", response.status().as_str()));
-            }
-            response.into_body().concat2().from_err().into()
-        });
+        let mut response = self.client.request(hyper_request).await?;
 
-        let decoded_response =
-            response_data.and_then(|data: Chunk| base64::decode(&data).map(SignatureRevocationList).into_future().from_err());
-
-        decoded_response.into()
+        if !response.status().is_success() {
+            return Err(format_err!("HTTP error: {}", response.status().as_str()));
+        }
+        let data = hyper::body::to_bytes(response.body_mut()).await?;
+        Ok(SignatureRevocationList(base64::decode(&data)?))
     }
 
-    fn fetch_quote_signature(&self, quote: &[u8]) -> impl Future<Item = (http::response::Parts, Chunk), Error = failure::Error> {
-        let uri = try_future!(self.request_uri(format_args!("/report")));
+    async fn fetch_quote_signature(&self, quote: &[u8]) -> Result<(Parts, Bytes), failure::Error> {
+        let uri = self.request_uri(format_args!("/report"))?;
 
         let request = QuoteSignatureRequest { isvEnclaveQuote: quote };
-        let encoded_request = try_future!(serde_json::to_vec(&request));
+        let encoded_request = serde_json::to_vec(&request)?;
         let mut hyper_request = Request::new(Body::from(encoded_request));
 
         *hyper_request.method_mut() = Method::POST;
@@ -129,41 +123,30 @@ where
             hyper_request.headers_mut().insert("Ocp-Apim-Subscription-Key", api_key.clone());
         }
 
-        let response = self.client.request(hyper_request);
-        let full_response = response.and_then(move |response: Response<Body>| {
-            let (response_parts, response_body) = response.into_parts();
-
-            let response_data = response_body.concat2();
-
-            response_data.map(|response_data| (response_parts, response_data))
-        });
-        full_response.from_err().into()
+        let response = self.client.request(hyper_request).await?;
+        let (response_parts, response_body) = response.into_parts();
+        let response_data = body::to_bytes(response_body).await?;
+        Ok((response_parts, response_data))
     }
 
-    pub fn get_quote_signature(
-        &self,
-        quote: Vec<u8>,
-        accept_group_out_of_date: bool,
-    ) -> impl Future<Item = SignedQuote, Error = GetQuoteSignatureError>
-    {
+    pub async fn get_quote_signature(&self, quote: Vec<u8>, accept_group_out_of_date: bool) -> Result<SignedQuote, GetQuoteSignatureError> {
         let api_version = self.api_version.clone();
-        let response = self.fetch_quote_signature(&quote);
-        let signed_quote = response.then(move |response_result: Result<(http::response::Parts, Chunk), failure::Error>| {
-            let (response_parts, response_data) = response_result.map_err(GetQuoteSignatureError::FetchError)?;
-
-            let signed_quote_result = validate_quote_signature(api_version, response_parts, response_data, quote, accept_group_out_of_date);
-            signed_quote_result.map_err(GetQuoteSignatureError::QuoteVerificationError)
-        });
-
-        signed_quote
+        let (response_parts, response_data) = self
+            .fetch_quote_signature(&quote)
+            .await
+            .map_err(GetQuoteSignatureError::FetchError)?;
+        return validate_quote_signature(api_version, response_parts, response_data, quote, accept_group_out_of_date)
+            .map_err(GetQuoteSignatureError::QuoteVerificationError);
     }
 
-    fn request_uri(&self, request_path: fmt::Arguments<'_>) -> Result<Uri, failure::Error> {
-        uri_path_join(self.base_uri.clone(), request_path)
+    fn request_uri(&self, append_path: fmt::Arguments<'_>) -> Result<Uri, failure::Error> {
+        uri_path_join(self.base_uri.clone(), append_path)
     }
 }
 
-impl<C> Clone for IasClient<C> {
+impl<C> Clone for IasClient<C>
+where C: Clone
+{
     fn clone(&self) -> Self {
         Self {
             base_uri:    self.base_uri.clone(),
@@ -182,19 +165,18 @@ fn uri_path_join(uri: Uri, append_path: fmt::Arguments<'_>) -> Result<Uri, failu
         .map(PathAndQuery::path)
         .unwrap_or_default()
         .trim_end_matches('/');
-    parts.path_and_query = Some(format!("{}{}", path_base, append_path).parse::<http::uri::PathAndQuery>()?);
+    parts.path_and_query = Some(format!("{}{}", path_base, append_path).parse::<PathAndQuery>()?);
     let uri = Uri::from_parts(parts)?;
     Ok(uri)
 }
 
 fn validate_quote_signature(
     api_version: IasApiVersion,
-    response_parts: http::response::Parts,
-    response_body_data: Chunk,
+    response_parts: Parts,
+    response_body_data: Bytes,
     quote: Vec<u8>,
     accept_group_out_of_date: bool,
-) -> Result<SignedQuote, QuoteVerificationError>
-{
+) -> Result<SignedQuote, QuoteVerificationError> {
     if !response_parts.status.is_success() {
         let response_body_string = String::from_utf8_lossy(&response_body_data).to_string();
         return Err(QuoteVerificationError::HttpError(
@@ -310,7 +292,7 @@ impl std::ops::Deref for SignatureRevocationList {
 #[derive(failure::Fail)]
 pub enum QuoteVerificationError {
     #[fail(display = "attestation http error: {}", _0)]
-    HttpError(http::status::StatusCode, http::response::Parts, String),
+    HttpError(StatusCode, Parts, String),
     #[fail(display = "missing attestation http header {}", _0)]
     MissingHeader(&'static str),
     #[fail(display = "invalid attestation http header value for {}: {:?}", _0, _1)]
