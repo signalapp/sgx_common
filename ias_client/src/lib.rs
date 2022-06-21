@@ -100,6 +100,8 @@ where
 
         let response = self.client.request(hyper_request);
         let response_data = response.from_err().and_then(|response: Response<Body>| {
+            println!("Get signature revocation list request ID: {:?}", response.headers().get("Request-ID"));
+
             if !response.status().is_success() {
                 return TryFuture::from_error(format_err!("HTTP error: {}", response.status().as_str()));
             }
@@ -131,6 +133,8 @@ where
 
         let response = self.client.request(hyper_request);
         let full_response = response.and_then(move |response: Response<Body>| {
+            println!("Fetch quote signature request ID: {:?}", response.headers().get("Request-ID"));
+
             let (response_parts, response_body) = response.into_parts();
 
             let response_data = response_body.concat2();
